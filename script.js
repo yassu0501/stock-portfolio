@@ -380,18 +380,35 @@ async function addStock() {
     return;
   }
 
-  // 新しい銘柄オブジェクトを作成
-  const newStock = {
-    name: name,
-    ticker: ticker,
-    buyPrice: buyPrice,
-    shares: shares,
-    date: date,
-    currentPrice: null // 株価取得前はnull
-  };
+  // 同一銘柄がすでにポートフォリオにあるか確認
+  const existingStockIndex = portfolio.findIndex(s => s.ticker === ticker);
 
-  // ポートフォリオに追加
-  portfolio.push(newStock);
+  if (existingStockIndex !== -1) {
+    // 既存銘柄がある場合は平均取得単価を計算して更新
+    const existingStock = portfolio[existingStockIndex];
+    const totalShares = existingStock.shares + shares;
+    // 平均取得単価 = (既存の総取得額 + 今回の取得額) / 合計株数
+    const newAveragePrice = ((existingStock.buyPrice * existingStock.shares) + (buyPrice * shares)) / totalShares;
+    
+    existingStock.shares = totalShares;
+    existingStock.buyPrice = newAveragePrice;
+    // 購入日は最新の追加日に更新、またはそのまま（ここでは最新に更新）
+    existingStock.date = date;
+    
+    showToast(`${name}（${ticker}）を買い増ししました（平均単価: ¥${formatNumber(newAveragePrice)}）`, 'success');
+  } else {
+    // 新規銘柄として追加
+    const newStock = {
+      name: name,
+      ticker: ticker,
+      buyPrice: buyPrice,
+      shares: shares,
+      date: date,
+      currentPrice: null
+    };
+    portfolio.push(newStock);
+    showToast(`${name}（${ticker}）を追加しました`, 'success');
+  }
 
   // 保存と画面更新
   savePortfolio();
@@ -406,17 +423,8 @@ async function addStock() {
   sharesInput.value = '';
   dateInput.value = new Date().toISOString().split('T')[0];
 
-  showToast(`${name}（${ticker}）を追加しました`, 'success');
-
-  // 追加した銘柄の株価を取得
-  await fetchStockPrice(portfolio.length - 1);
-  
-  // 株価取得後に再度画面を更新
-  renderPortfolio();
-  calculateSummary();
-  renderPieChart();
-  savePortfolioHistory();
-  renderHistoryChart();
+  // 全銘柄の価格を更新（または該当銘柄のみでも良いが、確実なのは全体）
+  updatePrices();
 }
 
 /**
@@ -710,6 +718,16 @@ async function updatePrices() {
     // 資産履歴を保存
     savePortfolioHistory();
     renderHistoryChart();
+
+    // 最終更新時刻を更新
+    const timeEl = document.getElementById('last-update-time');
+    const outerEl = document.getElementById('last-update-outer');
+    if (timeEl && outerEl) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      timeEl.textContent = timeStr;
+      outerEl.style.display = 'block'; // 初回表示時に有効化
+    }
 
     showToast('株価の更新が完了しました', 'success');
   } catch (error) {
