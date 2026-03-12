@@ -505,6 +505,9 @@ function renderPortfolio() {
       pnlClass = pnl >= 0 ? 'profit' : 'loss';
     }
 
+    // 損益率 = (現在価格 - 購入価格) / 購入価格
+    const pnlPercent = currentPriceJpy !== null ? ((currentPriceJpy - buyPriceJpy) / buyPriceJpy) * 100 : null;
+
     tr.innerHTML = `
       <td>${escapeHtml(stock.name)}</td>
       <td class="ticker-cell">${escapeHtml(stock.ticker)}</td>
@@ -514,6 +517,7 @@ function renderPortfolio() {
       <td>${marketValue !== null ? '¥' + formatNumber(marketValue) : '—'}</td>
       <td class="${pnlClass}">
         ${pnl !== null ? (pnl >= 0 ? '+' : '-') + '¥' + formatNumber(Math.abs(pnl)) : '—'}
+        ${pnlPercent !== null ? `<div class="pnl-percent">${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%</div>` : ''}
       </td>
       <td style="display: flex; flex-direction: column; gap: var(--space-xs);">
         <button class="btn btn--danger" onclick="window.deleteStock(${index})">削除</button>
@@ -553,6 +557,7 @@ function calculateSummary() {
 
   // 総損益 = 現在評価額 - 総投資額
   const totalPnl = hasCurrentPrice ? totalCurrent - totalInvestment : 0;
+  const totalPnlPercent = totalInvestment > 0 ? (totalPnl / totalInvestment) * 100 : 0;
 
   // DOM要素を更新
   document.getElementById('total-investment').textContent = '¥' + formatNumber(totalInvestment);
@@ -562,7 +567,7 @@ function calculateSummary() {
 
   const pnlEl = document.getElementById('total-pnl');
   pnlEl.textContent = hasCurrentPrice
-    ? (totalPnl >= 0 ? '+¥' : '-¥') + formatNumber(Math.abs(totalPnl))
+    ? (totalPnl >= 0 ? '+¥' : '-¥') + formatNumber(Math.abs(totalPnl)) + ` (${totalPnlPercent >= 0 ? '+' : ''}${totalPnlPercent.toFixed(2)}%)`
     : '—';
 
   // 損益に応じた色を適用
@@ -623,7 +628,7 @@ async function fetchStockPrice(index) {
     if (price) {
       portfolio[index].currentPrice = price;
       portfolio[index].fetchFailed = false;
-      savePortfolio(); // 保存も忘れずに行う
+      // 個別に savePortfolio() は呼ばず、updatePrices 側で一括保存するように変更
     } else {
       throw new Error('Price not found in data');
     }
@@ -667,12 +672,13 @@ async function updatePrices() {
       }
     }
 
-    // 全ての株価取得が完了した後に1回だけ画面を更新（チラつき防止）
+    // 全ての株価取得が完了した後に画面と履歴を更新
     renderPortfolio();
     calculateSummary();
     renderPieChart();
 
-    // 資産履歴を保存
+    // データをクラウドとローカルに保存（一括で1回だけ実行して効率化）
+    await savePortfolio();
     savePortfolioHistory();
     renderHistoryChart();
 
@@ -681,9 +687,8 @@ async function updatePrices() {
     const outerEl = document.getElementById('last-update-outer');
     if (timeEl && outerEl) {
       const now = new Date();
-      const timeStr = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      timeEl.textContent = timeStr;
-      outerEl.style.display = 'block'; // 初回表示時に有効化
+      timeEl.textContent = now.toLocaleTimeString('ja-JP');
+      outerEl.style.display = 'block';
     }
 
     showToast('株価の更新が完了しました', 'success');
