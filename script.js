@@ -53,13 +53,13 @@ let isUpdatingPrices = false;
 
 /** 利用可能なCORSプロキシのリスト */
 const PROXY_LIST = [
+  'https://corsproxy.io/?',
   'https://api.allorigins.win/raw?url=',
-  'https://api.codetabs.com/v1/proxy?quest=',
-  'https://corsproxy.org/?'
+  'https://api.codetabs.com/v1/proxy?quest='
 ];
 
 /** Yahoo Finance Chart APIのベースURL */
-const YAHOO_API_BASE = 'https://query2.finance.yahoo.com/v8/finance/chart/';
+const YAHOO_API_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart/';
 /** 為替レート（USD/JPY）のデフォルト値 */
 let usdjpyRate = 150;
 
@@ -72,16 +72,25 @@ async function fetchWithProxy(targetUrl) {
   
   for (const proxy of PROXY_LIST) {
     try {
+      // プロキシ経由のURLを構築
       const url = `${proxy}${encodeURIComponent(targetUrl)}`;
       const response = await fetch(url);
+      
       if (response.ok) {
         return await response.json();
       }
-      console.warn(`Proxy failed: ${proxy}`, response.status);
+      
+      // ステータスエラー時の詳細ログ
+      const errorDetail = await response.text().catch(() => 'No error body');
+      console.warn(`Proxy returned status ${response.status}: ${proxy}`, errorDetail.substring(0, 100));
     } catch (e) {
+      // ネットワークエラー、またはJSONパースエラー
       console.warn(`Proxy error: ${proxy}`, e.message);
       lastError = e;
     }
+    
+    // 連続失敗時のレート制限回避のためにわずかに待機（500ms）
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
   throw lastError || new Error('全てのプロキシで取得に失敗しました');
 }
@@ -621,7 +630,7 @@ function calculateSummary() {
  */
 async function fetchExchangeRate() {
   try {
-    const targetUrl = 'https://query2.finance.yahoo.com/v8/finance/chart/USDJPY=X?range=1d&interval=1d';
+    const targetUrl = YAHOO_API_BASE + 'USDJPY=X?range=1d&interval=1d';
     const data = await fetchWithProxy(targetUrl);
     const rate = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
     if (rate) {
