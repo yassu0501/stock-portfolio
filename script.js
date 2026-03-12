@@ -52,7 +52,7 @@ let priceUpdateTimer = null;
 let isUpdatingPrices = false;
 
 /** Google Apps Script (GAS) 経由で取得する専用URL */
-const GAS_PROXY_URL = 'https://script.google.com/macros/s/AKfycbzzfR0TNq1_nxrkgajwmwXvDVbhK3qA9Eatgpemt3VIFTmAynBeKzF5w5tV2wt4zTuv6Q/exec';
+const GAS_PROXY_URL = 'https://script.google.com/macros/s/AKfycbwaFVLgBtTXzLI39qkcO7VfBL3mkdbGBNlI0Stc1wJjuiF-4GXbUXX6WzdcVBoOzJ65PA/exec';
 
 /** GAS経由でデータを取得する関数 */
 async function fetchWithProxy(ticker) {
