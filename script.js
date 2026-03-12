@@ -51,21 +51,13 @@ let priceUpdateTimer = null;
 /** 複数回更新が同時に走るのを防ぐフラグ */
 let isUpdatingPrices = false;
 
-/** 利用可能なCORSプロキシのリスト（GitHub Pagesで動作しやすいものを優先） */
+/** 利用可能なCORSプロキシのリスト（上から順に試行） */
 const PROXY_LIST = [
-  'https://api.allorigins.win/get?url=',      // JSONラップされるが安定
-  'https://api.codetabs.com/v1/proxy?quest=', // そのままのレスポンス
-  'https://corsproxy.io/?',                 // fallback (localhost以外は403の可能性あり)
-  'https://thingproxy.freeboard.io/fetch/'   // 非常にシンプル
+  'https://thingproxy.freeboard.io/fetch/',
+  'https://api.allorigins.win/get?url=',
+  'https://api.codetabs.com/v1/proxy?quest=',
+  'https://cors-anywhere.herokuapp.com/' // fallback
 ];
-
-/** Yahoo Finance APIのベースURL */
-const YAHOO_API_BASE = 'https://query2.finance.yahoo.com/v8/finance/chart/';
-
-/** 為替レート（USD/JPY）のデフォルト値 */
-let usdjpyRate = 150;
-/** 為替レート取得済みフラグ */
-let isRateFetched = false;
 
 /** プロキシ経由でデータを取得する共通関数 */
 async function fetchWithProxy(targetUrl) {
@@ -76,35 +68,21 @@ async function fetchWithProxy(targetUrl) {
       const url = `${proxy}${encodeURIComponent(targetUrl)}`;
       const response = await fetch(url);
       
-      if (!response.ok) {
-        console.warn(`Proxy returned status ${response.status}: ${proxy}`);
-        continue;
-      }
+      if (!response.ok) continue;
       
       const data = await response.json();
       
-      // Allorigins (+ /get/) の場合は 'contents' プロパティに生の文字列が入っている
-      if (proxy.includes('allorigins.win/get')) {
-        if (data.contents) {
-          try {
-            return JSON.parse(data.contents);
-          } catch (e) {
-            console.warn('Allorigins contents JSON parse error');
-            continue;
-          }
-        }
+      // Allorigins 型のラップ対応
+      if (proxy.includes('allorigins.win')) {
+        return data.contents ? JSON.parse(data.contents) : data;
       }
       
       return data;
     } catch (e) {
-      console.warn(`Proxy failed: ${proxy}`, e.message);
       lastError = e;
     }
-    
-    // 短いウェイト
-    await new Promise(resolve => setTimeout(resolve, 300));
   }
-  throw lastError || new Error('全てのプロキシで取得に失敗しました');
+  throw lastError || new Error('All proxies failed');
 }
 
 // =========================================================
@@ -234,19 +212,12 @@ function updateAuthUI() {
  */
 async function loginWithGoogle() {
   const provider = new firebase.auth.GoogleAuthProvider();
-  // ポップアップでのログインを試行
   try {
-    const result = await auth.signInWithPopup(provider);
-    showToast(`${result.user.displayName} さんとしてログインしました`, 'success');
+    // ポップアップの代わりにリダイレクトを使用（GitHub Pagesでの安定性向上）
+    await auth.signInWithRedirect(provider);
   } catch (error) {
     console.error('Login error:', error);
-    if (error.code === 'auth/unauthorized-domain') {
-      showToast('このドメインからのログインは許可されていません。Firebaseの設定を確認してください。', 'error');
-    } else if (error.code === 'auth/popup-blocked') {
-      showToast('ポップアップがブロックされました。ブラウザの設定を変更してください。', 'info');
-    } else {
-      showToast(`ログインに失敗しました (${error.message})`, 'error');
-    }
+    showToast(`ログイン処理の開始に失敗しました (${error.message})`, 'error');
   }
 }
 
@@ -298,8 +269,7 @@ async function savePortfolio() {
 async function loadFromFirestore() {
   if (!currentUser) return;
   try {
-    // 為替レートは共通で取得
-    await fetchExchangeRate();
+    // 為替レート取得は不要のため削除
 
     const doc = await db.collection('users').doc(currentUser.uid).get();
     if (doc.exists) {
@@ -334,8 +304,7 @@ async function loadPortfolio() {
     const savedHistory = localStorage.getItem('lifetimePnlHistory');
     const savedRealizedHistory = localStorage.getItem('realizedHistory');
 
-    // 為替レートを取得
-    await fetchExchangeRate();
+    // 為替レート取得は不要のため削除
 
     // ポートフォリオデータの復元
     if (savedPortfolio) {
@@ -638,72 +607,47 @@ function calculateSummary() {
 // =========================================================
 
 /**
- * 為替レート（USD/JPY）を取得する
- */
-async function fetchExchangeRate() {
-  try {
-    const targetUrl = YAHOO_API_BASE + 'USDJPY=X?range=1d&interval=1d';
-    const data = await fetchWithProxy(targetUrl);
-    const rate = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-    if (rate) {
-      usdjpyRate = rate;
-      isRateFetched = true;
-      console.log(`為替レート更新: USD/JPY = ${usdjpyRate}`);
-    }
-  } catch (error) {
-    console.warn('為替レートの取得に失敗しました。デフォルト値を使用します:', error.message);
-  }
-}
-
-/**
- * 通貨換算を行う（銘柄が米国株の場合は円に換算）
- * @param {number} price - 元の価格
- * @param {string} ticker - ティッカーシンボル
- * @returns {number} 換算後の価格（円）
+ * 通貨換算（現在は日本株のみ・または価格をそのまま扱うため、変換せずに返す）
  */
 function convertToJpy(price, ticker) {
-  if (!price) return 0;
-  // 日本株（.T または .TK）以外は米国株とみなして換算
-  const isJapanese = ticker.endsWith('.T') || ticker.endsWith('.TK');
-  return isJapanese ? price : price * usdjpyRate;
+  return price || 0;
 }
 
 /**
  * 指定インデックスの銘柄の現在株価を取得する
- * Yahoo Finance Chart API を CORSプロキシ経由で呼び出す
- * @param {number} index - ポートフォリオ内の銘柄インデックス
  */
 async function fetchStockPrice(index) {
   const stock = portfolio[index];
   if (!stock) return;
-
   const ticker = stock.ticker;
 
-  try {
-    // Yahoo Finance Chart APIにリクエスト
-    const targetUrl = YAHOO_API_BASE + ticker + '?range=1d&interval=1d';
-    const data = await fetchWithProxy(targetUrl);
+  // Yahoo Finance のエンドポイント候補
+  const bases = [
+    'https://query1.finance.yahoo.com/v8/finance/chart/',
+    'https://query2.finance.yahoo.com/v8/finance/chart/'
+  ];
 
-    // レスポンスから現在価格を取得
-    const result = data?.chart?.result?.[0];
-    if (!result) {
-      throw new Error('データが見つかりません');
+  let success = false;
+  for (const base of bases) {
+    try {
+      const targetUrl = base + ticker + '?range=1d&interval=1d';
+      const data = await fetchWithProxy(targetUrl);
+      const rawPrice = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+
+      if (rawPrice) {
+        portfolio[index].currentPrice = rawPrice;
+        portfolio[index].fetchFailed = false;
+        success = true;
+        break;
+      }
+    } catch (e) {
+      continue;
     }
+  }
 
-    // 現在価格を取得（regularMarketPrice を優先）
-    const meta = result.meta;
-    const rawPrice = meta?.regularMarketPrice ?? null;
-
-    if (rawPrice !== null) {
-      // ポートフォリオデータを更新（エラーフラグも解除）
-      portfolio[index].currentPrice = rawPrice;
-      portfolio[index].fetchFailed = false;
-      savePortfolio();
-    }
-  } catch (error) {
-    console.warn(`${ticker} の株価取得に失敗しました:`, error.message);
+  if (!success) {
+    console.warn(`${ticker} fetch failed`);
     portfolio[index].fetchFailed = true;
-    showToast(`${ticker} の株価が取得できませんでした`, 'error');
   }
 }
 
