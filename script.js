@@ -51,18 +51,19 @@ let priceUpdateTimer = null;
 /** 複数回更新が同時に走るのを防ぐフラグ */
 let isUpdatingPrices = false;
 
-/** 利用可能なCORSプロキシのリスト */
+/** 利用可能なCORSプロキシのリスト（GitHub Pagesで動作しやすいものを優先） */
 const PROXY_LIST = [
-  'https://corsproxy.io/?',
-  'https://api.allorigins.win/raw?url=',
-  'https://api.codetabs.com/v1/proxy?quest='
+  'https://api.allorigins.win/get?url=',      // JSONラップされるが安定
+  'https://api.codetabs.com/v1/proxy?quest=', // そのままのレスポンス
+  'https://corsproxy.io/?',                 // fallback (localhost以外は403の可能性あり)
+  'https://thingproxy.freeboard.io/fetch/'   // 非常にシンプル
 ];
 
-/** Yahoo Finance Chart APIのベースURL */
-const YAHOO_API_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart/';
+/** Yahoo Finance APIのベースURL */
+const YAHOO_API_BASE = 'https://query2.finance.yahoo.com/v8/finance/chart/';
+
 /** 為替レート（USD/JPY）のデフォルト値 */
 let usdjpyRate = 150;
-
 /** 為替レート取得済みフラグ */
 let isRateFetched = false;
 
@@ -72,25 +73,36 @@ async function fetchWithProxy(targetUrl) {
   
   for (const proxy of PROXY_LIST) {
     try {
-      // プロキシ経由のURLを構築
       const url = `${proxy}${encodeURIComponent(targetUrl)}`;
       const response = await fetch(url);
       
-      if (response.ok) {
-        return await response.json();
+      if (!response.ok) {
+        console.warn(`Proxy returned status ${response.status}: ${proxy}`);
+        continue;
       }
       
-      // ステータスエラー時の詳細ログ
-      const errorDetail = await response.text().catch(() => 'No error body');
-      console.warn(`Proxy returned status ${response.status}: ${proxy}`, errorDetail.substring(0, 100));
+      const data = await response.json();
+      
+      // Allorigins (+ /get/) の場合は 'contents' プロパティに生の文字列が入っている
+      if (proxy.includes('allorigins.win/get')) {
+        if (data.contents) {
+          try {
+            return JSON.parse(data.contents);
+          } catch (e) {
+            console.warn('Allorigins contents JSON parse error');
+            continue;
+          }
+        }
+      }
+      
+      return data;
     } catch (e) {
-      // ネットワークエラー、またはJSONパースエラー
-      console.warn(`Proxy error: ${proxy}`, e.message);
+      console.warn(`Proxy failed: ${proxy}`, e.message);
       lastError = e;
     }
     
-    // 連続失敗時のレート制限回避のためにわずかに待機（500ms）
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // 短いウェイト
+    await new Promise(resolve => setTimeout(resolve, 300));
   }
   throw lastError || new Error('全てのプロキシで取得に失敗しました');
 }
