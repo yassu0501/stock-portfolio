@@ -51,38 +51,27 @@ let priceUpdateTimer = null;
 /** 複数回更新が同時に走るのを防ぐフラグ */
 let isUpdatingPrices = false;
 
-/** 利用可能なCORSプロキシのリスト（上から順に試行） */
+/** 利用可能なCORSプロキシの最小構成 */
 const PROXY_LIST = [
-  'https://thingproxy.freeboard.io/fetch/',
   'https://api.allorigins.win/get?url=',
-  'https://api.codetabs.com/v1/proxy?quest=',
-  'https://cors-anywhere.herokuapp.com/' // fallback
+  'https://thingproxy.freeboard.io/fetch/'
 ];
 
-/** プロキシ経由でデータを取得する共通関数 */
+/** プロキシ経由でデータを取得する基本関数 */
 async function fetchWithProxy(targetUrl) {
-  let lastError = null;
-  
   for (const proxy of PROXY_LIST) {
     try {
-      const url = `${proxy}${encodeURIComponent(targetUrl)}`;
-      const response = await fetch(url);
-      
+      const response = await fetch(`${proxy}${encodeURIComponent(targetUrl)}`);
       if (!response.ok) continue;
-      
+
       const data = await response.json();
-      
-      // Allorigins 型のラップ対応
-      if (proxy.includes('allorigins.win')) {
-        return data.contents ? JSON.parse(data.contents) : data;
-      }
-      
-      return data;
+      // Allorigins の場合は中身をパース、それ以外はそのまま返す
+      return proxy.includes('allorigins.win') ? JSON.parse(data.contents) : data;
     } catch (e) {
-      lastError = e;
+      console.error(`Proxy fail: ${proxy}`);
     }
   }
-  throw lastError || new Error('All proxies failed');
+  throw new Error('Stock data fetch failed');
 }
 
 // =========================================================
@@ -614,39 +603,27 @@ function convertToJpy(price, ticker) {
 }
 
 /**
- * 指定インデックスの銘柄の現在株価を取得する
+ * 指定インデックスの銘柄の株価を取得する
  */
 async function fetchStockPrice(index) {
   const stock = portfolio[index];
   if (!stock) return;
+
   const ticker = stock.ticker;
+  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=1d&interval=1d`;
 
-  // Yahoo Finance のエンドポイント候補
-  const bases = [
-    'https://query1.finance.yahoo.com/v8/finance/chart/',
-    'https://query2.finance.yahoo.com/v8/finance/chart/'
-  ];
+  try {
+    const data = await fetchWithProxy(targetUrl);
+    const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
 
-  let success = false;
-  for (const base of bases) {
-    try {
-      const targetUrl = base + ticker + '?range=1d&interval=1d';
-      const data = await fetchWithProxy(targetUrl);
-      const rawPrice = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-
-      if (rawPrice) {
-        portfolio[index].currentPrice = rawPrice;
-        portfolio[index].fetchFailed = false;
-        success = true;
-        break;
-      }
-    } catch (e) {
-      continue;
+    if (price) {
+      portfolio[index].currentPrice = price;
+      portfolio[index].fetchFailed = false;
+    } else {
+      throw new Error('Price not found');
     }
-  }
-
-  if (!success) {
-    console.warn(`${ticker} fetch failed`);
+  } catch (error) {
+    console.error(`Fetch error for ${ticker}:`, error.message);
     portfolio[index].fetchFailed = true;
   }
 }
