@@ -52,10 +52,10 @@ let priceUpdateTimer = null;
 let isUpdatingPrices = false;
 
 /** CORSプロキシのURL */
-const CORS_PROXY = 'https://corsproxy.io/?url=';
+const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
 /** Yahoo Finance Chart APIのベースURL */
-const YAHOO_API_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart/';
+const YAHOO_API_BASE = 'https://query2.finance.yahoo.com/v8/finance/chart/';
 /** 為替レート（USD/JPY）のデフォルト値 */
 let usdjpyRate = 150;
 
@@ -63,7 +63,7 @@ let usdjpyRate = 150;
 let isRateFetched = false;
 
 /** 為替レートAPIのURL */
-const EXCHANGE_RATE_API = 'https://query1.finance.yahoo.com/v8/finance/chart/USDJPY=X?range=1d&interval=1d';
+const EXCHANGE_RATE_API = 'https://query2.finance.yahoo.com/v8/finance/chart/USDJPY=X?range=1d&interval=1d';
 
 // =========================================================
 // 初期化
