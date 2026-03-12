@@ -51,27 +51,31 @@ let priceUpdateTimer = null;
 /** 複数回更新が同時に走るのを防ぐフラグ */
 let isUpdatingPrices = false;
 
-/** 利用可能なCORSプロキシの最小構成 */
-const PROXY_LIST = [
-  'https://api.allorigins.win/get?url=',
-  'https://thingproxy.freeboard.io/fetch/'
-];
+/** Google Apps Script (GAS) 経由で取得する専用URL */
+const GAS_PROXY_URL = 'https://script.google.com/macros/s/AKfycbzzfR0TNq1_nxrkgajwmwXvDVbhK3qA9Eatgpemt3VIFTmAynBeKzF5w5tV2wt4zTuv6Q/exec';
 
-/** プロキシ経由でデータを取得する基本関数 */
-async function fetchWithProxy(targetUrl) {
-  for (const proxy of PROXY_LIST) {
-    try {
-      const response = await fetch(`${proxy}${encodeURIComponent(targetUrl)}`);
-      if (!response.ok) continue;
-
-      const data = await response.json();
-      // Allorigins の場合は中身をパース、それ以外はそのまま返す
-      return proxy.includes('allorigins.win') ? JSON.parse(data.contents) : data;
-    } catch (e) {
-      console.error(`Proxy fail: ${proxy}`);
+/** GAS経由でデータを取得する関数 */
+async function fetchWithProxy(ticker) {
+  try {
+    // GASには ?ticker=SYMBOL の形式で渡す
+    const url = `${GAS_PROXY_URL}?ticker=${encodeURIComponent(ticker)}`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`GAS returned status ${response.status}`);
     }
+
+    const data = await response.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    return data;
+  } catch (e) {
+    console.error(`GAS fetch error:`, e.message);
+    throw e;
   }
-  throw new Error('Stock data fetch failed');
 }
 
 // =========================================================
@@ -610,20 +614,21 @@ async function fetchStockPrice(index) {
   if (!stock) return;
 
   const ticker = stock.ticker;
-  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=1d&interval=1d`;
 
   try {
-    const data = await fetchWithProxy(targetUrl);
+    // GAS経由でデータを取得 (tickerを直接渡す形式に変更)
+    const data = await fetchWithProxy(ticker);
     const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
 
     if (price) {
       portfolio[index].currentPrice = price;
       portfolio[index].fetchFailed = false;
+      savePortfolio(); // 保存も忘れずに行う
     } else {
-      throw new Error('Price not found');
+      throw new Error('Price not found in data');
     }
   } catch (error) {
-    console.error(`Fetch error for ${ticker}:`, error.message);
+    console.error(`GAS Fetch error for ${ticker}:`, error.message);
     portfolio[index].fetchFailed = true;
   }
 }
