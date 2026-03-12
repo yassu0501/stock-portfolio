@@ -51,8 +51,12 @@ let priceUpdateTimer = null;
 /** 複数回更新が同時に走るのを防ぐフラグ */
 let isUpdatingPrices = false;
 
-/** CORSプロキシのURL */
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+/** 利用可能なCORSプロキシのリスト */
+const PROXY_LIST = [
+  'https://api.allorigins.win/raw?url=',
+  'https://api.codetabs.com/v1/proxy?quest=',
+  'https://corsproxy.org/?'
+];
 
 /** Yahoo Finance Chart APIのベースURL */
 const YAHOO_API_BASE = 'https://query2.finance.yahoo.com/v8/finance/chart/';
@@ -62,8 +66,25 @@ let usdjpyRate = 150;
 /** 為替レート取得済みフラグ */
 let isRateFetched = false;
 
-/** 為替レートAPIのURL */
-const EXCHANGE_RATE_API = 'https://query2.finance.yahoo.com/v8/finance/chart/USDJPY=X?range=1d&interval=1d';
+/** プロキシ経由でデータを取得する共通関数 */
+async function fetchWithProxy(targetUrl) {
+  let lastError = null;
+  
+  for (const proxy of PROXY_LIST) {
+    try {
+      const url = `${proxy}${encodeURIComponent(targetUrl)}`;
+      const response = await fetch(url);
+      if (response.ok) {
+        return await response.json();
+      }
+      console.warn(`Proxy failed: ${proxy}`, response.status);
+    } catch (e) {
+      console.warn(`Proxy error: ${proxy}`, e.message);
+      lastError = e;
+    }
+  }
+  throw lastError || new Error('全てのプロキシで取得に失敗しました');
+}
 
 // =========================================================
 // 初期化
@@ -140,16 +161,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       try {
         // Yahoo Finance APIから情報を取得 (ローカルリストにない場合のフォールバック)
-        const url = `${CORS_PROXY}${encodeURIComponent(YAHOO_API_BASE + ticker + '?range=1d&interval=1d')}`;
-        const response = await fetch(url);
-        if (response.ok) {
-          const data = await response.json();
-          const meta = data?.chart?.result?.[0]?.meta;
-          // 日本株の場合は shortName が無い場合が多いので、longName 等も確認、ダメならティッカーそのまま
-          const fetchedName = meta?.shortName || meta?.longName || meta?.symbol;
-          if (fetchedName) {
-            nameInput.value = fetchedName;
-          }
+        const targetUrl = YAHOO_API_BASE + ticker + '?range=1d&interval=1d';
+        const data = await fetchWithProxy(targetUrl);
+        const meta = data?.chart?.result?.[0]?.meta;
+        // 日本株の場合は shortName が無い場合が多いので、longName 等も確認、ダメならティッカーそのまま
+        const fetchedName = meta?.shortName || meta?.longName || meta?.symbol;
+        if (fetchedName) {
+          nameInput.value = fetchedName;
         }
       } catch (err) {
         console.warn('銘柄名の自動取得に失敗しました', err);
@@ -603,10 +621,8 @@ function calculateSummary() {
  */
 async function fetchExchangeRate() {
   try {
-    const url = `${CORS_PROXY}${encodeURIComponent(EXCHANGE_RATE_API)}`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('為替レート取得失敗');
-    const data = await response.json();
+    const targetUrl = 'https://query2.finance.yahoo.com/v8/finance/chart/USDJPY=X?range=1d&interval=1d';
+    const data = await fetchWithProxy(targetUrl);
     const rate = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
     if (rate) {
       usdjpyRate = rate;
@@ -644,14 +660,8 @@ async function fetchStockPrice(index) {
 
   try {
     // Yahoo Finance Chart APIにリクエスト
-    const url = `${CORS_PROXY}${encodeURIComponent(YAHOO_API_BASE + ticker + '?range=1d&interval=1d')}`;
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(`HTTPエラー: ${response.status}`);
-    }
-
-    const data = await response.json();
+    const targetUrl = YAHOO_API_BASE + ticker + '?range=1d&interval=1d';
+    const data = await fetchWithProxy(targetUrl);
 
     // レスポンスから現在価格を取得
     const result = data?.chart?.result?.[0];
