@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="個別株ポートフォリオ管理ダッシュボード。保有銘柄の評価額・損益・資産配分をリアルタイムで可視化。">
+  <title>Stock Portfolio Dashboard</title>
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+  <!-- スタイルシート -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ===== ヘッダー ===== -->
+  <header class="header">
+    <div class="header__inner">
+      <div class="header__logo">
+        <svg class="header__icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 17L9 11L13 15L21 7M21 7V12M21 7H16" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <h1>Portfolio</h1>
+      </div>
+      <div id="auth-container" class="auth-box">
+        <!-- ログイン前 -->
+        <div id="auth-logged-out">
+          <button class="btn btn--secondary" onclick="loginWithGoogle()">Googleでログイン</button>
+        </div>
+        <!-- ログイン後 -->
+        <div id="auth-logged-in" style="display: none;">
+          <div class="user-info">
+            <span id="user-name"></span>
+            <button class="btn btn--secondary btn--sm" onclick="logout()">ログアウト</button>
+          </div>
+        </div>
+      </div>
+      <p class="header__subtitle">あなたの資産をスマートに管理</p>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- ===== サマリーカード ===== -->
+    <div class="last-update" id="last-update-outer" style="display: none;">
+      最終更新: <span id="last-update-time">-</span>
+    </div>
+    <section class="summary" id="summary-section">
+      <div class="summary__card">
+        <span class="summary__label">総投資額</span>
+        <span class="summary__value" id="total-investment">¥0</span>
+      </div>
+      <div class="summary__card">
+        <span class="summary__label">現在評価額</span>
+        <span class="summary__value" id="total-current">¥0</span>
+      </div>
+      <div class="summary__card">
+        <span class="summary__label">総損益</span>
+        <span class="summary__value" id="total-pnl">¥0</span>
+      </div>
+      <div class="summary__card">
+        <span class="summary__label">確定実現損益</span>
+        <span class="summary__value" id="realized-pnl">¥0</span>
+        <button class="btn btn--secondary" style="margin-top: var(--space-sm); font-size: 0.8rem; padding: 0.4rem; justify-content: center;" onclick="openHistoryModal()">履歴を確認・編集</button>
+      </div>
+    </section>
+
+    <!-- ===== 株式追加フォーム ===== -->
+    <section class="form-section">
+      <h2 class="section-title">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        銘柄を追加
+      </h2>
+      <form class="stock-form" id="stock-form" onsubmit="return false;">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="input-name">銘柄名</label>
+            <input type="text" id="input-name" placeholder="銘柄コード入力で自動取得されます" required>
+          </div>
+          <div class="form-group">
+            <label for="input-ticker">銘柄コード</label>
+            <input type="text" id="input-ticker" placeholder="例: AAPL または 7203.T" required>
+          </div>
+          <div class="form-group">
+            <label for="input-price">購入価格 (¥)</label>
+            <input type="number" id="input-price" placeholder="例: 150" step="0.01" min="0" required>
+          </div>
+          <div class="form-group">
+            <label for="input-shares">株数</label>
+            <input type="number" id="input-shares" placeholder="例: 10" step="1" min="1" required>
+          </div>
+          <div class="form-group">
+            <label for="input-date">購入日</label>
+            <input type="date" id="input-date" required>
+          </div>
+        </div>
+        <button type="button" class="btn btn--primary" id="btn-add" onclick="addStock()">
+          <span>＋</span> 追加する
+        </button>
+      </form>
+    </section>
+
+    <!-- ===== ポートフォリオ一覧テーブル ===== -->
+    <section class="table-section">
+      <div class="section-header">
+        <h2 class="section-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 6H21M8 12H21M8 18H21M3 6H3.01M3 12H3.01M3 18H3.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          ポートフォリオ一覧
+        </h2>
+        <button class="btn btn--secondary" id="btn-refresh" onclick="updatePrices()">
+          🔄 株価を更新
+        </button>
+      </div>
+      <!-- テーブル（空の場合のメッセージ含む） -->
+      <div class="table-wrapper">
+        <table class="portfolio-table" id="portfolio-table">
+          <thead>
+            <tr>
+              <th>銘柄名</th>
+              <th>銘柄コード</th>
+              <th>購入価格</th>
+              <th>現在価格</th>
+              <th>株数</th>
+              <th>評価額</th>
+              <th>損益</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="portfolio-tbody">
+            <!-- JavaScriptで動的に生成 -->
+          </tbody>
+        </table>
+        <p class="empty-message" id="empty-message">銘柄が登録されていません。上のフォームから追加してください。</p>
+      </div>
+    </section>
+
+    <!-- ===== グラフセクション ===== -->
+    <section class="charts-section">
+      <div class="charts-grid">
+        <!-- 円グラフ -->
+        <div class="chart-card">
+          <h2 class="section-title">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M21.21 15.89A10 10 0 118 2.83M22 12A10 10 0 0012 2v10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            資産配分
+          </h2>
+          <div class="chart-container chart-container--pie">
+            <canvas id="pie-chart"></canvas>
+          </div>
+        </div>
+        <!-- 生涯損益（数字表示） -->
+        <div class="chart-card">
+          <h2 class="section-title">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Total Performance (生涯損益)
+          </h2>
+          <div class="lifetime-pnl-container">
+            <span class="lifetime-pnl-value" id="lifetime-pnl-display">¥0</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== フッター ===== -->
+  <footer class="footer">
+    <p>Stock Portfolio Dashboard &copy; 2026 — データは Yahoo Finance から取得しています</p>
+  </footer>
+
+  <!-- ===== 損益確定モーダル ===== -->
+  <div class="modal-overlay" id="sell-modal" style="display: none;">
+    <div class="modal">
+      <div class="modal__header">
+        <h3>損益を確定する</h3>
+        <button class="modal__close" onclick="closeSellModal()">×</button>
+      </div>
+      <div class="modal__body">
+        <p id="sell-modal-stock-name" style="margin-bottom: 1rem; font-weight: bold;"></p>
+        <div class="form-group" style="margin-bottom: 1rem;">
+          <label for="input-sell-price">売却価格（1株あたり）</label>
+          <input type="number" id="input-sell-price" placeholder="例: 1500" step="0.01" min="0" required>
+        </div>
+        <div class="form-group">
+          <label for="input-sell-shares">売却株数</label>
+          <input type="number" id="input-sell-shares" placeholder="例: 100" step="1" min="1" required>
+        </div>
+        <p id="sell-modal-info" style="margin-top: 1rem; font-size: 0.9em; color: var(--text-muted);"></p>
+        <input type="hidden" id="sell-modal-index">
+      </div>
+      <div class="modal__footer">
+        <button class="btn btn--secondary" onclick="closeSellModal()">キャンセル</button>
+        <button class="btn btn--primary" style="background: var(--accent-green); color: white;" onclick="confirmSellStock()">確定して削除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 履歴確認モーダル ===== -->
+  <div class="modal-overlay" id="history-modal" style="display: none;">
+    <div class="modal modal--large">
+      <div class="modal__header">
+        <h3>確定実現損益の履歴</h3>
+        <button class="modal__close" onclick="closeHistoryModal()">×</button>
+      </div>
+      <div class="modal__body">
+        <div id="history-list-container" class="history-list">
+          <!-- JSで履歴一覧を生成 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 履歴編集モーダル ===== -->
+  <div class="modal-overlay" id="edit-history-modal" style="display: none;">
+    <div class="modal">
+      <div class="modal__header">
+        <h3>履歴を編集</h3>
+        <button class="modal__close" onclick="closeEditHistoryModal()">×</button>
+      </div>
+      <div class="modal__body">
+        <p id="edit-history-stock-name" style="margin-bottom: 1rem; font-weight: bold;"></p>
+        <div class="form-group">
+          <label for="input-edit-sell-price">売却価格（1株あたり）</label>
+          <input type="number" id="input-edit-sell-price" step="0.01" min="0" required>
+        </div>
+        <input type="hidden" id="edit-history-id">
+      </div>
+      <div class="modal__footer">
+        <button class="btn btn--secondary" onclick="closeEditHistoryModal()">キャンセル</button>
+        <button class="btn btn--primary" style="background: var(--accent-blue);" onclick="confirmEditHistory()">保存する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 削除確認用カスタムモーダル ===== -->
+  <div class="modal-overlay" id="delete-confirm-modal" style="display: none;">
+    <div class="modal">
+      <div class="modal__header">
+        <h3>削除の確認</h3>
+        <button class="modal__close" onclick="closeDeleteConfirmModal()">×</button>
+      </div>
+      <div class="modal__body">
+        <p>この履歴を削除してもよろしいですか？</p>
+        <p style="margin-top: 0.5rem; color: var(--accent-red); font-size: 0.85rem;">※この操作は取り消せません。生涯損益などが再計算されます。</p>
+        <input type="hidden" id="delete-confirm-id">
+      </div>
+      <div class="modal__footer">
+        <button class="btn btn--secondary" onclick="closeDeleteConfirmModal()">キャンセル</button>
+        <button class="btn btn--danger" style="background: var(--accent-red); color: white;" onclick="executeDeleteHistory()">削除する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- トースト通知 -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- スクリプト -->
+  <script src="stock_names.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
