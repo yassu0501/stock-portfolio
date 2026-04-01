@@ -23,6 +23,12 @@ const db = firebase.firestore();
 /** 現在のログインユーザー */
 let currentUser = null;
 
+/** データ読み込み中フラグ（保存処理のガードに使用） */
+let isDataLoading = false;
+
+/** 認証初期化済みフラグ */
+let isAuthInitialized = false;
+
 // =========================================================
 // グローバル変数
 // =========================================================
@@ -88,22 +94,31 @@ async function fetchWithProxy(ticker) {
 document.addEventListener('DOMContentLoaded', async () => {
   // 認証状態の監視
   auth.onAuthStateChanged(async (user) => {
+    // ユーザーが切り替わった場合、または初回読み込み時
+    const userChanged = !isAuthInitialized || (currentUser?.uid !== user?.uid);
     currentUser = user;
+    isAuthInitialized = true;
     updateAuthUI();
 
-    if (user) {
-      // ログイン時はFirestoreから取得
-      await loadFromFirestore();
-    } else {
-      // 未ログイン時はLocalStorageから取得
+    if (userChanged) {
+      isDataLoading = true;
+      // データを一度リセット（古いユーザーやゲストのデータが残らないようにする）
       portfolio = [];
       portfolioHistory = [];
       realizedHistory = [];
-      await loadPortfolio();
-    }
 
-    // 画面を共通で描画 (株価更新も含む)
-    refreshUI();
+      if (user) {
+        // ログイン時はFirestoreから取得
+        await loadFromFirestore();
+      } else {
+        // 未ログイン時はLocalStorageから取得
+        await loadPortfolio();
+      }
+      isDataLoading = false;
+
+      // 画面を共通で描画 (株価更新も含む)
+      refreshUI();
+    }
   });
 
   // 購入日のデフォルト値を今日に設定
@@ -112,14 +127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     dateInput.value = new Date().toISOString().split('T')[0];
   }
 
-  // 銘柄が存在する場合、株価を取得して資産履歴を保存
-  if (portfolio.length > 0) {
-    updatePrices();
-  } else {
-    // 銘柄が0の場合でも初期の実現損益を履歴として記録・描画
-    savePortfolioHistory();
-    renderHistoryChart();
-  }
+  // 初回の株価更新などは onAuthStateChanged 側に任せるため、ここでは行わない（二重実行防止）
 
   // 5分ごとに株価を自動更新（300,000ms = 5分）
   priceUpdateTimer = setInterval(() => {
@@ -232,6 +240,9 @@ async function logout() {
  * データを保存する（Auth状態に応じて振分）
  */
 async function savePortfolio() {
+  // 読み込み中や初期化前は保存をスキップ（データの先祖返りを防ぐ）
+  if (isDataLoading || !isAuthInitialized) return;
+
   // LocalStorageへの保存（バックアップ的に実行）
   try {
     localStorage.setItem('portfolio', JSON.stringify(portfolio));
@@ -262,6 +273,10 @@ async function savePortfolio() {
  */
 async function loadFromFirestore() {
   if (!currentUser) return;
+  const wasLoading = isDataLoading;
+  isDataLoading = true;
+  showToast('クラウドからデータを読み込んでいます...', 'info');
+
   try {
     // 為替レート取得は不要のため削除
 
@@ -286,6 +301,8 @@ async function loadFromFirestore() {
   } catch (e) {
     console.error('Firestore load error:', e);
     showToast('クラウドからの読み込みに失敗しました', 'error');
+  } finally {
+    if (!wasLoading) isDataLoading = false;
   }
 }
 
@@ -293,6 +310,8 @@ async function loadFromFirestore() {
  * LocalStorageからポートフォリオと履歴を読み込む
  */
 async function loadPortfolio() {
+  const wasLoading = isDataLoading;
+  isDataLoading = true;
   try {
     const savedPortfolio = localStorage.getItem('portfolio');
     const savedHistory = localStorage.getItem('lifetimePnlHistory');
@@ -342,6 +361,8 @@ async function loadPortfolio() {
     portfolio = [];
     portfolioHistory = [];
     realizedHistory = [];
+  } finally {
+    if (!wasLoading) isDataLoading = false;
   }
 }
 
