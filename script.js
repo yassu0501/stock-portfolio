@@ -121,6 +121,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // リダイレクトログインの結果を確認（スマホ/iOS Safari等の不具合対策）
+  try {
+    const result = await auth.getRedirectResult();
+    if (result && result.user) {
+      currentUser = result.user;
+      showToast(`${currentUser.displayName} としてログインしました`, 'success');
+    }
+  } catch (error) {
+    console.error('Redirect result error:', error);
+    if (error.code === 'auth/account-exists-with-different-credential') {
+      showToast('別のログイン方法ですでにアカウントが存在します', 'error');
+    } else if (error.code !== 'auth/popup-closed-by-user') {
+      // リダイレクトログイン固有のエラーがあれば表示
+      // ただし初回読み込み時は無視して良いものも多い
+    }
+  }
+
   // 購入日のデフォルト値を今日に設定
   const dateInput = document.getElementById('input-date');
   if (dateInput) {
@@ -215,11 +232,23 @@ function updateAuthUI() {
 async function loginWithGoogle() {
   const provider = new firebase.auth.GoogleAuthProvider();
   try {
-    // ポップアップの代わりにリダイレクトを使用（GitHub Pagesでの安定性向上）
-    await auth.signInWithRedirect(provider);
+    // スマホ/iOS Safariの制限を考慮し、ポップアップをメインで使用
+    // ユーザーのクリック直後に実行されるため、通常はブロックされません
+    await auth.signInWithPopup(provider);
+    showToast('ログインに成功しました', 'success');
   } catch (error) {
     console.error('Login error:', error);
-    showToast(`ログイン処理の開始に失敗しました (${error.message})`, 'error');
+    // ポップアップがブロックされた場合やエラー時のフォールバックとしてリダイレクトを試みる
+    if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-popup-request') {
+      showToast('ポップアップがブロックされました。リダイレクトログインを試みます...', 'info');
+      try {
+        await auth.signInWithRedirect(provider);
+      } catch (reError) {
+        showToast(`ログインに失敗しました (${reError.message})`, 'error');
+      }
+    } else if (error.code !== 'auth/popup-closed-by-user') {
+      showToast(`ログインに失敗しました (${error.message})`, 'error');
+    }
   }
 }
 
