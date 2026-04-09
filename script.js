@@ -1220,8 +1220,63 @@ function showToast(message, type = 'info') {
   }, 3000);
 }
 // =========================================================
+// CSVエクスポート
+// =========================================================
+
+/**
+ * 保有銘柄をCSVファイルとしてダウンロードする
+ */
+function exportToCSV() {
+  if (portfolio.length === 0) {
+    showToast('エクスポートするデータがありません', 'error');
+    return;
+  }
+
+  const headers = ['銘柄名', '銘柄コード', '購入価格(¥)', '現在価格(¥)', '株数', '評価額(¥)', '損益(¥)', '損益率(%)', '購入日'];
+
+  const rows = portfolio.map(stock => {
+    const buyPriceJpy = stock.buyPrice;
+    const currentPriceJpy = stock.currentPrice !== null ? convertToJpy(stock.currentPrice, stock.ticker) : null;
+    const evalAmount = currentPriceJpy !== null ? currentPriceJpy * stock.shares : '';
+    const pnl = currentPriceJpy !== null ? (currentPriceJpy - buyPriceJpy) * stock.shares : '';
+    const pnlRate = currentPriceJpy !== null ? (((currentPriceJpy - buyPriceJpy) / buyPriceJpy) * 100).toFixed(2) : '';
+
+    return [
+      stock.name,
+      stock.ticker,
+      buyPriceJpy,
+      currentPriceJpy !== null ? currentPriceJpy : '',
+      stock.shares,
+      evalAmount,
+      pnl,
+      pnlRate,
+      stock.date
+    ];
+  });
+
+  const csvContent = [headers, ...rows]
+    .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\r\n');
+
+  // BOM付きUTF-8（Excelで文字化けしないように）
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+
+  const today = new Date().toISOString().split('T')[0];
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `portfolio_${today}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  showToast('CSVをダウンロードしました', 'success');
+}
+
+// =========================================================
 // グローバルに関数を公開（onclickイベント等からアクセス可能にする）
 // =========================================================
 window.addStock = addStock;
 window.deleteStock = deleteStock;
 window.updatePrices = updatePrices;
+window.exportToCSV = exportToCSV;
