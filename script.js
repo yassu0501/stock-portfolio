@@ -638,11 +638,13 @@ function calculateSummary() {
     pnlEl.style.color = '';
   }
 
-  // 実現損益の更新（履歴配列から再計算）
+  // 実現損益の更新（税引後で再計算）
   realizedPnl = realizedHistory.reduce((sum, item) => {
-    // 現在は日本株メインのため、個別の為替換算は行わずそのまま合算
-    // (将来的に海外株に対応する場合はここにレート取得ロジックが必要)
-    return sum + (item.sellPrice - item.buyPrice) * item.shares;
+    const rawPnl = (item.sellPrice - item.buyPrice) * item.shares;
+    const taxRate = item.taxRate || 0;
+    // 利益分のみ税金を控除（損失には課税しない）
+    const tax = rawPnl > 0 ? rawPnl * (taxRate / 100) : 0;
+    return sum + rawPnl - tax;
   }, 0);
 
   const realizedEl = document.getElementById('realized-pnl');
@@ -796,17 +798,22 @@ function openSellModal(index) {
 
   document.getElementById('sell-modal-index').value = index;
   document.getElementById('sell-modal-stock-name').textContent = `${stock.name} (${stock.ticker})`;
-  
+
   const priceInput = document.getElementById('input-sell-price');
   priceInput.value = defaultPrice.toFixed(2);
-  
+
   const sharesInput = document.getElementById('input-sell-shares');
   sharesInput.value = stock.shares; // デフォルトで全数
   sharesInput.max = stock.shares;
 
+  // 税率はデフォルト20%（前回値をそのまま維持）
+  const taxInput = document.getElementById('input-sell-tax-rate');
+  if (!taxInput.value) taxInput.value = 20;
+
   document.getElementById('sell-modal-info').textContent = `購入価格: ¥${formatNumber(stock.buyPrice)} / 保有数: ${stock.shares}株`;
 
   document.getElementById('sell-modal').style.display = 'flex';
+  updateSellModalPreview();
 }
 
 /**
@@ -816,6 +823,7 @@ function closeSellModal() {
   document.getElementById('sell-modal').style.display = 'none';
   document.getElementById('input-sell-price').value = '';
   document.getElementById('input-sell-shares').value = '';
+  document.getElementById('sell-modal-tax-preview').innerHTML = '';
 }
 
 /**
@@ -825,12 +833,14 @@ function confirmSellStock() {
   const indexStr = document.getElementById('sell-modal-index').value;
   const sellPriceStr = document.getElementById('input-sell-price').value;
   const sellSharesStr = document.getElementById('input-sell-shares').value;
+  const taxRateStr = document.getElementById('input-sell-tax-rate').value;
 
   if (indexStr === '' || sellPriceStr === '' || sellSharesStr === '') return;
 
   const index = parseInt(indexStr, 10);
   const sellPrice = parseFloat(sellPriceStr);
   const sellShares = parseInt(sellSharesStr, 10);
+  const taxRate = parseFloat(taxRateStr) || 0;
 
   const stock = portfolio[index];
   if (!stock || isNaN(sellPrice) || sellPrice <= 0 || isNaN(sellShares) || sellShares <= 0) {
@@ -843,7 +853,12 @@ function confirmSellStock() {
     return;
   }
 
-  // 履歴に追加
+  // 税引後損益を計算（損失の場合は税金なし）
+  const rawPnl = (sellPrice - stock.buyPrice) * sellShares;
+  const tax = rawPnl > 0 ? rawPnl * (taxRate / 100) : 0;
+  const afterTaxPnl = rawPnl - tax;
+
+  // 履歴に追加（税率も保存）
   const historyItem = {
     id: Date.now(),
     name: stock.name,
@@ -851,6 +866,7 @@ function confirmSellStock() {
     buyPrice: stock.buyPrice,
     sellPrice: sellPrice,
     shares: sellShares,
+    taxRate: taxRate,
     date: new Date().toISOString().split('T')[0]
   };
   realizedHistory.push(historyItem);
@@ -873,12 +889,54 @@ function confirmSellStock() {
   renderHistoryChart();
 
   closeSellModal();
-  // サマリー計算後に realizedPnl が更新されるので、それを使ってトースト表示してもよいが、ここでは個別の pnl を再計算
-  const itemPnl = (sellPrice - stock.buyPrice) * sellShares;
-  const pnlText = (itemPnl >= 0 ? '+' : '-') + '¥' + formatNumber(Math.abs(itemPnl));
-  showToast(`${stock.name} を ${sellShares}株 確定しました（損益: ${pnlText}）`, 'success');
+  const pnlText = (afterTaxPnl >= 0 ? '+' : '-') + '¥' + formatNumber(Math.abs(afterTaxPnl));
+  const taxText = taxRate > 0 && rawPnl > 0 ? `（税${taxRate}%控除後）` : '';
+  showToast(`${stock.name} を ${sellShares}株 確定しました（損益: ${pnlText}${taxText}）`, 'success');
 }
 
+/**
+ * 売却モーダルの税引後損益プレビューを更新する
+ */
+function updateSellModalPreview() {
+  const indexStr = document.getElementById('sell-modal-index').value;
+  const sellPriceStr = document.getElementById('input-sell-price').value;
+  const sellSharesStr = document.getElementById('input-sell-shares').value;
+  const taxRateStr = document.getElementById('input-sell-tax-rate').value;
+  const previewEl = document.getElementById('sell-modal-tax-preview');
+  if (!previewEl) return;
+
+  const index = parseInt(indexStr, 10);
+  const stock = portfolio[index];
+  if (!stock) return;
+
+  const sellPrice = parseFloat(sellPriceStr);
+  const sellShares = parseInt(sellSharesStr, 10);
+  const taxRate = parseFloat(taxRateStr) || 0;
+
+  if (isNaN(sellPrice) || isNaN(sellShares) || sellPrice <= 0 || sellShares <= 0) {
+    previewEl.innerHTML = '';
+    return;
+  }
+
+  const rawPnl = (sellPrice - stock.buyPrice) * sellShares;
+  const tax = rawPnl > 0 ? rawPnl * (taxRate / 100) : 0;
+  const afterTaxPnl = rawPnl - tax;
+  const sign = afterTaxPnl >= 0 ? '+' : '-';
+  const color = afterTaxPnl >= 0 ? 'var(--accent-emerald)' : 'var(--accent-rose)';
+
+  if (taxRate > 0 && rawPnl > 0) {
+    previewEl.innerHTML =
+      `税引前: ${rawPnl >= 0 ? '+' : '-'}¥${formatNumber(Math.abs(rawPnl))} ` +
+      `→ 税金 (${taxRate}%): -¥${formatNumber(tax)} ` +
+      `→ <strong style="color:${color}">税引後: ${sign}¥${formatNumber(Math.abs(afterTaxPnl))}</strong>`;
+  } else {
+    previewEl.innerHTML =
+      `<strong style="color:${color}">損益: ${sign}¥${formatNumber(Math.abs(afterTaxPnl))}</strong>` +
+      (rawPnl <= 0 && taxRate > 0 ? '（損失のため課税なし）' : '');
+  }
+}
+
+window.updateSellModalPreview = updateSellModalPreview;
 window.openSellModal = openSellModal;
 window.closeSellModal = closeSellModal;
 window.confirmSellStock = confirmSellStock;
@@ -912,8 +970,15 @@ function renderHistory() {
 
   // 新しい順に表示
   [...realizedHistory].reverse().forEach((item) => {
-    const pnl = (item.sellPrice - item.buyPrice) * item.shares;
-    
+    const rawPnl = (item.sellPrice - item.buyPrice) * item.shares;
+    const taxRate = item.taxRate || 0;
+    const tax = rawPnl > 0 ? rawPnl * (taxRate / 100) : 0;
+    const afterTaxPnl = rawPnl - tax;
+
+    const taxLabel = taxRate > 0 && rawPnl > 0
+      ? `<span style="font-size: 0.8em; color: var(--text-muted);">（税${taxRate}%控除: -¥${formatNumber(tax)}）</span>`
+      : '';
+
     const div = document.createElement('div');
     div.className = 'history-item';
     div.innerHTML = `
@@ -922,8 +987,8 @@ function renderHistory() {
         <span class="history-item__sub">売却日: ${item.date} / 購入: ¥${formatNumber(item.buyPrice)} / 売却: ¥${formatNumber(item.sellPrice)} / ${item.shares}株</span>
       </div>
       <div style="display: flex; align-items: center; gap: var(--space-lg);">
-        <span class="history-item__pnl" style="color: ${pnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}">
-          ${pnl >= 0 ? '+' : '-'}¥${formatNumber(Math.abs(pnl))}
+        <span class="history-item__pnl" style="color: ${afterTaxPnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}">
+          ${afterTaxPnl >= 0 ? '+' : '-'}¥${formatNumber(Math.abs(afterTaxPnl))}${taxLabel}
         </span>
         <div class="history-item__actions">
           <button class="btn btn--secondary" style="padding: 0.3rem 0.6rem; font-size: 0.75rem;" onclick="window.openEditHistoryModal(${item.id})">編集</button>
